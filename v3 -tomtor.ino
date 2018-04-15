@@ -39,15 +39,15 @@
 // use low power sleep: 0.5mA
 //#define SLEEP
 //void mdelay(int n, bool mode = false);
-#ifdef SLEEP
+//#ifdef SLEEP
 // or DeepSleep: 0.05mA, but RAM is lost and reboots on wakeup.
 // We safe some data in the RTC backup ram which survives DeepSleep
 #define DEEP_SLEEP  false
 
-#if DEEP_SLEEP
-#undef OTA
-#endif
-#endif
+//#if DEEP_SLEEP
+//#undef OTA
+//#endif
+//#endif
 
 #define led       LED_BUILTIN
 #define voltage   PA0
@@ -56,18 +56,18 @@
 
 #ifndef OTA
 // LoRaWAN NwkSKey, your network session key, 16 bytes (from staging.thethingsnetwork.org)
-static unsigned char NWKSKEY[16] = { };
+static unsigned char NWKSKEY[16] = { 0x74, 0xFD, 0x41, 0x83, 0x38, 0x87, 0x9F, 0xE6, 0xB3, 0x7A, 0xD0, 0x58, 0xA8, 0x48, 0xDC, 0xBF };
 
 // LoRaWAN AppSKey, application session key, 16 bytes  (from staging.thethingsnetwork.org)
-static unsigned char APPSKEY[16] = {  };
+static unsigned char APPSKEY[16] = { 0x5D, 0xF2, 0x26, 0xEA, 0xEA, 0x71, 0x86, 0x73, 0xD8, 0x24, 0x7F, 0x29, 0x59, 0xEB, 0x77, 0x51 };
 
 // LoRaWAN end-device address (DevAddr), ie 0x91B375AC  (from staging.thethingsnetwork.org)
-static const u4_t DEVADDR = 0x ; // <-- Change this address for every node!
+static const u4_t DEVADDR = 0x260128BE ; // <-- Change this address for every node!
 #else
 
-static const u1_t APPEUI[8] = { }; // reversed 8 bytes of AppEUI registered with ttnctl
+static const u1_t APPEUI[8] = { 0xDC, 0xB6, 0x00, 0xD0, 0x7E, 0xD5, 0xB3, 0x70 }; // reversed 8 bytes of AppEUI registered with ttnctl
 
-static const unsigned char APPKEY[16] ={  }; // non-reversed 16 bytes of the APPKEY used when registering a device with ttnctl register DevEUI AppKey
+static const unsigned char APPKEY[16] ={ 0xD9, 0xF7, 0x1F, 0x20, 0x74, 0x99, 0x56, 0x77, 0x78, 0x0B, 0xEB, 0x3F, 0x78, 0x46, 0x0A, 0x9E }; // non-reversed 16 bytes of the APPKEY used when registering a device with ttnctl register DevEUI AppKey
 #endif
 
 // STM32 Unique Chip IDs
@@ -249,12 +249,13 @@ void os_getDevKey (u1_t* buf) {
 #endif
 }
 
-//static const u1_t DEVEUI[8]={}; // reversed 8 bytes of DevEUI registered with ttnctl
+static const u1_t DEVEUI[8]={ 0x43, 0x35, 0x42, 0x32, 0x24, 0x45, 0x23, 0x25 }; // reversed 8 bytes of DevEUI registered with ttnctl
 void os_getDevEui (u1_t* buf) {
   // use chip ID:
-  memcpy(buf, &STM32_ID[1], 8);
+//  memcpy(buf, &STM32_ID[1], 8);
+memcpy(buf,DEVEUI,8);
   // Make locally registered:
-  buf[0] = buf[0] & ~0x3 | 0x1;
+//  buf[0] = buf[0] & ~0x3 | 0x1;
 }
 #endif
 
@@ -510,7 +511,7 @@ void allInput()
 }
 
 void setup() {
-//  allInput();
+  allInput();
 
 //  SPIp = &mySPI;
   SPI.begin();
@@ -536,12 +537,12 @@ void setup() {
   blinkN((p[6] & 0x7) + 1);
   blinkN((p[7] & 0x7) + 1);
 #endif
-  Serial.println("Starting the lora radio...");
+
   // LMIC init
   os_init();
   // Reset the MAC state. Session and pending data transfers will be discarded.
   LMIC_reset();
- Serial.println("os_init done...now starting OTA");
+
 #ifndef OTA
   // Set static session parameters. Instead of dynamically establishing a session
   // by joining the network, precomputed session parameters are be provided.
@@ -669,7 +670,7 @@ void loop() {
     mdelay(txInterval * 1000, DEEP_SLEEP);
     delay(txInterval * 1000, DEEP_SLEEP);
 
-    Serial.begin(115200);
+    begin(115200);
 
     extern void hal_io_init();
     digitalWrite(lmic_pins.rst, 1); // prevent reset
@@ -678,7 +679,7 @@ void loop() {
     SPI.begin();
 
 #ifdef DEBUG
-    Serial.println(F("Sleep complete"));
+    Serial1.println(F("Sleep complete"));
 #endif
     next = false;
     // Start job

@@ -3,11 +3,13 @@ A sensor node for the things network using stm32/bluepill
 
 This is my repo for my experments with an STM32 based bluepill board+AiThinker Ra01 lora node.
 
-Right now some initial effor is required to compile...
+A few modifications in the IBM LMIC library is required...most important being diabling the disableIRQ and interrupts in hal.cpp
+
+
 
 this sketch is based on otaa example and it also features an ssd1306 based i2c oled. Messages are display on both the serial monitor as well as the tiny oled.
 
-In future i will add more sensors to this device like dust sensor, bmp180 pressure sensor etc.
+v3-oled sends temp/pressure/altitude readings from a cheap bmp180 sensor to the TTN...many messages are displayed on the oled also
 
 If you have any comments please record in the issues tab.
 

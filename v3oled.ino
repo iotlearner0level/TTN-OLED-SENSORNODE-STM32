@@ -23,12 +23,15 @@
    - optionally comment #define SLEEP
 
  *******************************************************************************/
-
+#define MESSAGE_DELAY 5000 //gap between messages in milli seconds
+int prevMillis=0;
 #include <lmic.h>
 #include <hal/hal.h>
 #include <SPI.h>
 
+
 #include <Wire.h>
+
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include "itoa.h"
@@ -36,11 +39,14 @@
 Adafruit_SSD1306 display(OLED_RESET);
 char temp[25];int lines=0;
 
+
+#include "BMP085.h"
+Adafruit_BMP085 bmp;
 // show debug statements; comment next line to disable debug statements
 #define DEBUG
 
 // Enable OTA?
-//#define OTA
+#define OTA
 
 // use low power sleep: 0.5mA
 //#define SLEEP
@@ -62,18 +68,18 @@ char temp[25];int lines=0;
 
 #ifndef OTA
 // LoRaWAN NwkSKey, your network session key, 16 bytes (from staging.thethingsnetwork.org)
-static unsigned char NWKSKEY[16] = { 0x7C, 0xCF, 0x4F, 0x28, 0x91, 0xFA, 0x19, 0x4B, 0x06, 0xBF, 0x8B, 0x4A, 0xDF, 0x0B, 0x5F, 0x4C };
+static unsigned char NWKSKEY[16] = {};
 
 // LoRaWAN AppSKey, application session key, 16 bytes  (from staging.thethingsnetwork.org)
-static unsigned char APPSKEY[16] = { 0x49, 0x8F, 0x17, 0x75, 0xE4, 0x31, 0x97, 0x18, 0x23, 0x39, 0xA5, 0x92, 0x17, 0x2E, 0xB2, 0xF2 };
+static unsigned char APPSKEY[16] = {  };
 
 // LoRaWAN end-device address (DevAddr), ie 0x91B375AC  (from staging.thethingsnetwork.org)
-static const u4_t DEVADDR = 0x26011836 ; // <-- Change this address for every node!
+static const u4_t DEVADDR =  ; // <-- Change this address for every node!
 #else
 
-static const u1_t APPEUI[8] = { 0xDC, 0xB6, 0x00, 0xD0, 0x7E, 0xD5, 0xB3, 0x70 }; // reversed 8 bytes of AppEUI registered with ttnctl
+static const u1_t APPEUI[8] = {  }; // reversed 8 bytes of AppEUI registered with ttnctl
 
-static const unsigned char APPKEY[16] ={ 0xD9, 0xF7, 0x1F, 0x20, 0x74, 0x99, 0x56, 0x77, 0x78, 0x0B, 0xEB, 0x3F, 0x78, 0x46, 0x0A, 0x9E }; // non-reversed 16 bytes of the APPKEY used when registering a device with ttnctl register DevEUI AppKey
+static const unsigned char APPKEY[16] ={  }; // non-reversed 16 bytes of the APPKEY used when registering a device with ttnctl register DevEUI AppKey
 #endif
 
 // STM32 Unique Chip IDs
@@ -99,8 +105,8 @@ int txInterval = 60;
 struct {
   unsigned short temp;
   unsigned short pres;
-  byte power;
-  byte rate2;
+  byte alt;
+  byte volt;
 } mydata;
 
 #ifdef SLEEP
@@ -331,8 +337,8 @@ msgOLED(F("Enter onEvent"));
       msgOLED(F("Data Received: "));
       Serial.write(LMIC.frame + LMIC.dataBeg, LMIC.dataLen);
       msgOLED("");
-        mydata.rate2 = (LMIC.frame + LMIC.dataBeg)[0];
-        txInterval = (1 << mydata.rate2);
+        mydata.volt = (LMIC.frame + LMIC.dataBeg)[0];
+        txInterval = (1 << mydata.volt);
         if (LMIC.dataLen > 1) {
           switch ((LMIC.frame + LMIC.dataBeg)[1]) {
             case 7: LMIC_setDrTxpow(DR_SF7, 14); break;
@@ -340,7 +346,7 @@ msgOLED(F("Enter onEvent"));
             case 9: LMIC_setDrTxpow(DR_SF9, 14); break;
             case 10: LMIC_setDrTxpow(DR_SF10, 14); break;
             case 11: LMIC_setDrTxpow(DR_SF11, 14); break;
-            case 12: LMIC_setDrTxpow(DR_SF12, 14); break;
+            case 12: LMIC_setDrTxpow(DR_SF7, 14); break;
           }
         }
       }
@@ -387,16 +393,16 @@ msgOLED(F("Enter do_send"));
   // Check if there is not a current TX/RX job running
   if (LMIC.opmode & OP_TXRXPEND) {
   msgOLED(F("OP_TXRXPEND, not sending"));
-  } else {
-    readData();
-#ifdef SLEEP
-    // Disable link check validation
-    LMIC_setLinkCheckMode(0);
-#endif
+  } 
+  //else 
+  {
+ 
+
     // Prepare upstream data transmission at the next possible time.
-    LMIC_setTxData2(1, (unsigned char *)&mydata, sizeof(mydata), 0);
+
+  } readData();
+  LMIC_setTxData2(1, (unsigned char *)&mydata, sizeof(mydata), 0);
   msgOLED(F("Packet queued"));
-  }
   // Next TX is scheduled after TX_COMPLETE event.
 #ifdef DEBUG
 msgOLED(F("Leave do_send"));
@@ -438,9 +444,33 @@ void readData()
 //  int vref = 1200 * 4096 / adc_read(ADC1, 17); // ADC sample to millivolts
 //  regs->CR2 &= ~ADC_CR2_TSVREFE; // disable VREFINT and temp sensor
 
-  pinMode(powerNTCPin, OUTPUT);
-  digitalWrite(powerNTCPin, 1);
+    Serial.print("Temperature = ");
+    Serial.print(bmp.readTemperature());
+    Serial.println(" *C");
+    
+    Serial.print("Pressure = ");
+    Serial.print(bmp.readPressure());
+    Serial.println(" Pa");
+    
+    // Calculate altitude assuming 'standard' barometric
+    // pressure of 1013.25 millibar = 101325 Pascal
+    Serial.print("Altitude = ");
+    Serial.print(bmp.readAltitude());
+    Serial.println(" meters");
 
+    Serial.print("Pressure at sealevel (calculated) = ");
+    Serial.print(bmp.readSealevelPressure());
+    Serial.println(" Pa");
+
+  // you can get a more precise measurement of altitude
+  // if you know the current sea level pressure which will
+  // vary with weather and such. If it is 1015 millibars
+  // that is equal to 101500 Pascals.
+    Serial.print("Real altitude = ");
+    Serial.print(bmp.readAltitude(101500));
+    Serial.println(" meters");
+    
+    Serial.println();
   int v = analogRead(tempPin);
   pinMode(powerNTCPin, INPUT);
   //adc_disable(ADC1);
@@ -462,9 +492,7 @@ void readData()
   blinkN(vref % 1000 / 100);
   blinkN(vref % 100 / 10);
 
-  mydata.temp = Temp * 10;
-   mydata.temp = 50;
-  Temp += 0.5; // round
+  mydata.temp = bmp.readTemperature();
   blinkTemp(int(Temp) / 10);
   blinkTemp(int(Temp) % 10);
 
@@ -473,8 +501,15 @@ msgOLED(v);
 #endif
 
   //mydata.power = (vref / 10) - 200;
-  mydata.power=55;
-  mydata.pres = 1111;
+  mydata.alt=bmp.readAltitude();
+  mydata.pres = bmp.readPressure();
+  String dataString="T:";
+  dataString+=bmp.readTemperature();
+  dataString+="C P:";
+  dataString+=bmp.readPressure();
+    dataString+="Bar Alt:";
+  dataString+=bmp.readAltitude();
+  msgOLED(dataString);
 }
 
 void allInput()
@@ -519,6 +554,8 @@ void allInput()
 }
 
 void setup() {
+ if (!bmp.begin()) 
+  Serial.println("Could not find a valid BMP085 sensor, check wiring!");
 //  allInput();
   display.begin(SSD1306_SWITCHCAPVCC, 0x3c);  // initialize with the I2C addr 0x3D (for the 128x64)
   // init done
@@ -526,9 +563,10 @@ void setup() {
   // Show image buffer on the display hardware.
   // Since the buffer is intialized with an Adafruit splashscreen
   // internally, this will display the splashscreen.
+  
   display.display();
 //  delay(2000);
-
+  display.clearDisplay();
  
     msgOLED("   STM32 Lora Node");
   // Show the display buffer on the hardware.
@@ -584,14 +622,14 @@ Serial.begin(115200);
   // your network here (unless your network autoconfigures them).
   // Setting up channels should happen after LMIC_setSession, as that
   // configures the minimal channel set.
-  LMIC_setupChannel(0, 433175000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
-  LMIC_setupChannel(1, 433175000, DR_RANGE_MAP(DR_SF12, DR_SF7B), BAND_CENTI);      // g-band
-  LMIC_setupChannel(2, 433175000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
-  LMIC_setupChannel(3, 433175000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
-  LMIC_setupChannel(4, 433175000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
-  LMIC_setupChannel(5, 433175000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
-  LMIC_setupChannel(6, 433175000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
-  LMIC_setupChannel(7, 433175000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
+  LMIC_setupChannel(0, 433175000, DR_RANGE_MAP(DR_SF7, DR_SF7),  BAND_CENTI);      // g-band
+  LMIC_setupChannel(1, 433175000, DR_RANGE_MAP(DR_SF7, DR_SF7B), BAND_CENTI);      // g-band
+  LMIC_setupChannel(2, 433175000, DR_RANGE_MAP(DR_SF7, DR_SF7),  BAND_CENTI);      // g-band
+  LMIC_setupChannel(3, 433175000, DR_RANGE_MAP(DR_SF7, DR_SF7),  BAND_CENTI);      // g-band
+  LMIC_setupChannel(4, 433175000, DR_RANGE_MAP(DR_SF7, DR_SF7),  BAND_CENTI);      // g-band
+  LMIC_setupChannel(5, 433175000, DR_RANGE_MAP(DR_SF7, DR_SF7),  BAND_CENTI);      // g-band
+  LMIC_setupChannel(6, 433175000, DR_RANGE_MAP(DR_SF7, DR_SF7),  BAND_CENTI);      // g-band
+  LMIC_setupChannel(7, 433175000, DR_RANGE_MAP(DR_SF7, DR_SF7),  BAND_CENTI);      // g-band
   LMIC_setupChannel(8, 433175000, DR_RANGE_MAP(DR_FSK,  DR_FSK),  BAND_MILLI);      // g2-band
   // TTN defines an additional channel at 869.525Mhz using SF9 for class B
   // devices' ping slots. LMIC does not have an easy way to define set this
@@ -605,7 +643,7 @@ Serial.begin(115200);
 
 #ifndef OTA
   // TTN uses SF9 for its RX2 window.
-  LMIC.dn2Dr = DR_SF9;
+  LMIC.dn2Dr = DR_SF7;
 
   // Set data rate and transmit power (note: txpow seems to be ignored by the library)
   LMIC_setDrTxpow(RATE, 14);
@@ -621,7 +659,7 @@ Serial.begin(115200);
 #endif
 
   // Start job
-    msgOLED("Starting job..");
+  msgOLED("Starting job..");
   do_send(&sendjob);
 
 #ifdef DEBUG
@@ -646,8 +684,8 @@ msgOLED(F("Leave setup"));
 
 
 void loop() {
-
-#ifndef SLEEP
+//msgOLED("Entering Loop");
+//#ifndef SLEEP
 
 #ifdef BLINK
   static int count;
@@ -655,80 +693,45 @@ void loop() {
                ! ((++count < 1000) || !TX_done)
               );
 #endif
-  os_runloop();
+ os_runloop_once();
 
-#else
 
+//  msgOLED("Starting job..");
+//  do_send(&sendjob);
 #ifdef OTA
+
+
   if (!joined) {
+//    msgOLED("Entering OLED");
     os_runloop_once();
-    return;
+//    return;
   }
 #endif
 
-  if (next == false) {
+/*  if (next == false) {
     digitalWrite(led, LOW);
-    //if (DEEP_SLEEP)
+    if (DEEP_SLEEP)
     LMIC.skipRX = 1; // Do NOT wait for downstream data!
-    os_runloop();
+//    os_runloop_once();
 
   } else {
-
+*/
 #ifdef BLINK
     digitalWrite(led, HIGH);
 #endif
 
-#ifdef DEBUG
-  msgOLED(LMIC.seqnoUp);
-#endif
-
-    if (DEEP_SLEEP)
-      storeBR(0, LMIC.seqnoUp);
-
-//    SPIp->end();
 
 
-    digitalWrite(PA5, LOW); // SCK
-    pinMode(PA5, OUTPUT);
 
-    digitalWrite(PA7, LOW); // MOSI
-    pinMode(PA7, OUTPUT);
 
-    pinMode(PA6, INPUT); // MISO
+    if(millis()-prevMillis>MESSAGE_DELAY)
+    {
+      prevMillis=millis();
+      msgOLED("Sending TTN data");
+      do_send(&sendjob);
+    }
+    
 
-    digitalWrite(lmic_pins.nss, LOW); // NSS
-    pinMode(lmic_pins.nss, OUTPUT);
-
-    // DIO Inputs
-    pinMode(PA11, INPUT);
-    pinMode(PA12, INPUT);
-    pinMode(PA15, INPUT);
-
-    pinMode(lmic_pins.rst, INPUT);
-
-    // Serial
-    pinMode(PA9, INPUT);
-    pinMode(PA10, INPUT);
-
-    mdelay(txInterval * 1000, DEEP_SLEEP);
-    delay(txInterval * 1000, DEEP_SLEEP);
-
-    begin(115200);
-
-    extern void hal_io_init();
-    digitalWrite(lmic_pins.rst, 1); // prevent reset
-    hal_io_init();
-
-    SPI.begin();
-
-#ifdef DEBUG
-  msgOLED(F("Sleep complete"));
-#endif
-    next = false;
-    // Start job
-    do_send(&sendjob);
-  }
-#endif
 }
 void msgOLED(String s)
 {

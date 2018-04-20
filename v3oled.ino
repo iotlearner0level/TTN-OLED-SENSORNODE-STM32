@@ -23,7 +23,7 @@
    - optionally comment #define SLEEP
 
  *******************************************************************************/
-#define MESSAGE_DELAY 5000 //gap between messages in milli seconds
+#define MESSAGE_DELAY 600000 //gap between messages in milli seconds
 int prevMillis=0;
 #include <lmic.h>
 #include <hal/hal.h>
@@ -46,7 +46,7 @@ Adafruit_BMP085 bmp;
 #define DEBUG
 
 // Enable OTA?
-#define OTA
+//#define OTA
 
 // use low power sleep: 0.5mA
 //#define SLEEP
@@ -56,10 +56,7 @@ Adafruit_BMP085 bmp;
 // We safe some data in the RTC backup ram which survives DeepSleep
 #define DEEP_SLEEP  false
 
-//#if DEEP_SLEEP
-//#undef OTA
-//#endif
-//#endif
+
 
 #define led       LED_BUILTIN
 #define voltage   PA0
@@ -68,18 +65,18 @@ Adafruit_BMP085 bmp;
 
 #ifndef OTA
 // LoRaWAN NwkSKey, your network session key, 16 bytes (from staging.thethingsnetwork.org)
-static unsigned char NWKSKEY[16] = {};
+static unsigned char NWKSKEY[16] = { };
 
 // LoRaWAN AppSKey, application session key, 16 bytes  (from staging.thethingsnetwork.org)
-static unsigned char APPSKEY[16] = {  };
+static unsigned char APPSKEY[16] = { };
 
 // LoRaWAN end-device address (DevAddr), ie 0x91B375AC  (from staging.thethingsnetwork.org)
-static const u4_t DEVADDR =  ; // <-- Change this address for every node!
+static const u4_t DEVADDR = ; // <-- Change this address for every node!
 #else
 
-static const u1_t APPEUI[8] = {  }; // reversed 8 bytes of AppEUI registered with ttnctl
+static const u1_t APPEUI[8] = { }; // reversed 8 bytes of AppEUI registered with ttnctl
 
-static const unsigned char APPKEY[16] ={  }; // non-reversed 16 bytes of the APPKEY used when registering a device with ttnctl register DevEUI AppKey
+static const unsigned char APPKEY[16] ={ }; // non-reversed 16 bytes of the APPKEY used when registering a device with ttnctl register DevEUI AppKey
 #endif
 
 // STM32 Unique Chip IDs
@@ -94,11 +91,7 @@ static const unsigned char APPKEY[16] ={  }; // non-reversed 16 bytes of the APP
 
 // Schedule TX every this many seconds (might become longer due to duty
 // cycle limitations).
-#ifdef SLEEP
-int txInterval = (DEEP_SLEEP ? 300 : 60); // Note that the LED flashing takes some time
-#else
-int txInterval = 60;
-#endif
+const unsigned TX_INTERVAL = 60;
 
 #define RATE        DR_SF7
 
@@ -108,113 +101,8 @@ struct {
   byte alt;
   byte volt;
 } mydata;
+byte payload[8];
 
-#ifdef SLEEP
-
-// Defined for power and sleep functions pwr.h and scb.h
-//#include <libmaple/pwr.h>
-//#include <libmaple/scb.h>
-
-//#include <RTClock.h>
-
-//RTClock rt(RTCSEL_LSI, 399); // 10 milli second alarm
-
-// Define the Base address of the RTC registers (battery backed up CMOS Ram), so we can use them for config of touch screen or whatever.
-// See http://stm32duino.com/viewtopic.php?f=15&t=132&hilit=rtc&start=40 for a more details about the RTC NVRam
-// 10x 16 bit registers are available on the STM32F103CXXX more on the higher density device.
-#define BKP_REG_BASE   ((uint32_t *)(0x40006C00 +0x04))
-
-void storeBR(int i, uint32_t v) {
-  BKP_REG_BASE[2 * i] = (v << 16);
-  BKP_REG_BASE[2 * i + 1] = (v & 0xFFFF);
-}
-
-uint32_t readBR(int i) {
-  return ((BKP_REG_BASE[2 * i] & 0xFFFF) >> 16) | (BKP_REG_BASE[2 * i + 1] & 0xFFFF);
-}
-
-bool next = false;
-
-void sleepMode(bool deepSleepFlag)
-{
-  // Clear PDDS and LPDS bits
-  PWR_BASE->CR &= PWR_CR_LPDS | PWR_CR_PDDS | PWR_CR_CWUF;
-
-  // Set PDDS and LPDS bits for standby mode, and set Clear WUF flag (required per datasheet):
-  PWR_BASE->CR |= PWR_CR_CWUF;
-  // Enable wakeup pin bit.
-  PWR_BASE->CR |=  PWR_CSR_EWUP;
-
-  SCB_BASE->SCR |= SCB_SCR_SLEEPDEEP;
-
-  // System Control Register Bits. See...
-  // http://infocenter.arm.com/help/index.jsp?topic=/com.arm.doc.dui0497a/Cihhjgdh.html
-  if (deepSleepFlag) {
-    // Set Power down deepsleep bit.
-    PWR_BASE->CR |= PWR_CR_PDDS;
-    // Unset Low-power deepsleep.
-    PWR_BASE->CR &= ~PWR_CR_LPDS;
-  } else {
-//    adc_disable(ADC1);
-//    adc_disable(ADC2);
-#if STM32_HAVE_DAC
-    dac_disable_channel(DAC, 1);
-    dac_disable_channel(DAC, 2);
-#endif
-    //  Unset Power down deepsleep bit.
-    PWR_BASE->CR &= ~PWR_CR_PDDS;
-    // set Low-power deepsleep.
-    PWR_BASE->CR |= PWR_CR_LPDS;
-  }
-
-  // Now go into stop mode, wake up on interrupt
-  asm("    wfi");
-
-  // Clear SLEEPDEEP bit so we can use SLEEP mode
-  SCB_BASE->SCR &= ~SCB_SCR_SLEEPDEEP;
-}
-
-uint32 sleepTime;
-
-void AlarmFunction () {
-  // We always wake up with the 8Mhz HSI clock!
-  // So adjust the clock if needed...
-
-#if F_CPU == 8000000UL
-  // nothing to do, using about 8 mA
-#elif F_CPU == 16000000UL
-  rcc_clk_init(RCC_CLKSRC_HSI, RCC_PLLSRC_HSE , RCC_PLLMUL_2);
-#elif F_CPU == 48000000UL
-  rcc_clk_init(RCC_CLKSRC_HSI, RCC_PLLSRC_HSE , RCC_PLLMUL_6);
-#elif F_CPU == 72000000UL
-  rcc_clk_init(RCC_CLKSRC_HSI, RCC_PLLSRC_HSE , RCC_PLLMUL_9);
-#else
-//#error "Unknown F_CPU!?"
-  rcc_clk_init(RCC_CLKSRC_HSI, RCC_PLLSRC_HSE , RCC_PLLMUL_9);
-
-#endif
-
-  extern volatile uint32 systick_uptime_millis;
-  systick_uptime_millis += sleepTime;
-}
-
-void mdelay(int n, bool mode = false)
-{
-  sleepTime = n;
-  time_t nextAlarm = (rt.getTime() + n / 10); // Calculate from time now.
-  rt.createAlarm(&AlarmFunction, nextAlarm);
-  sleepMode(mode);
-}
-
-void msleep(uint32_t ms)
-{
-  uint32_t start = rt.getTime();
-
-  while (rt.getTime() - start < ms) {
-    asm("    wfi");
-  }
-}
-#endif
 
 void blinkN(int n, int d = 400, int t = 800)
 {
@@ -281,7 +169,7 @@ const lmic_pinmap lmic_pins = {
   .rxtx = LMIC_UNUSED_PIN,
   //.rst = PB0,
   .rst = PB12,
-  .dio = {PA15, PA14, PA13}
+  .dio = {PB15, PB14, PB13}
 #else // USE_SPI == 2
   .nss = PB12,
   .rxtx = LMIC_UNUSED_PIN,
@@ -296,6 +184,9 @@ bool TX_done = false;
 bool joined = false;
 
 void onEvent (ev_t ev) {
+Serial.print(os_getTime());
+Serial.print(": ");
+
 #ifdef DEBUG
 msgOLED(F("Enter onEvent"));
 #endif
@@ -318,7 +209,8 @@ msgOLED(F("Enter onEvent"));
       break;
     case EV_JOINED:
     msgOLED(F("EV_JOINED"));
-      joined = true;
+      joined = true;            LMIC_setLinkCheckMode(0);
+
       break;
     case EV_RFU1:
     msgOLED(F("EV_RFU1"));
@@ -338,7 +230,6 @@ msgOLED(F("Enter onEvent"));
       Serial.write(LMIC.frame + LMIC.dataBeg, LMIC.dataLen);
       msgOLED("");
         mydata.volt = (LMIC.frame + LMIC.dataBeg)[0];
-        txInterval = (1 << mydata.volt);
         if (LMIC.dataLen > 1) {
           switch ((LMIC.frame + LMIC.dataBeg)[1]) {
             case 7: LMIC_setDrTxpow(DR_SF7, 14); break;
@@ -351,9 +242,7 @@ msgOLED(F("Enter onEvent"));
         }
       }
       // Schedule next transmission
-#ifndef SLEEP
-      os_setTimedCallback(&sendjob, os_getTime() + sec2osticks(txInterval), do_send);
-#endif
+            os_setTimedCallback(&sendjob, os_getTime()+sec2osticks(TX_INTERVAL), do_send);
 
       break;
     case EV_LOST_TSYNC:
@@ -393,17 +282,21 @@ msgOLED(F("Enter do_send"));
   // Check if there is not a current TX/RX job running
   if (LMIC.opmode & OP_TXRXPEND) {
   msgOLED(F("OP_TXRXPEND, not sending"));
-  } 
-  //else 
-  {
- 
-
-    // Prepare upstream data transmission at the next possible time.
-
-  } readData();
-  LMIC_setTxData2(1, (unsigned char *)&mydata, sizeof(mydata), 0);
+  }else{ 
+ readData();
+//  LMIC_setTxData2(1, (unsigned char *)&mydata, sizeof(mydata), 0);
+int temperature = (payload[0]<<8)|payload[1];
+int pressure = (payload[2]<<8)|payload[3];
+int altitude = (payload[4]<<8)|payload[5];
+int volt= (payload[6]<<8)|payload[7];
+  Serial.println("Setting payload data");
+  String s="Temperature=";s+=temperature;s+=" Pressure=";s+=pressure;s+="Altitude=";s+=altitude;
+  Serial.println(s);
+  LMIC_setTxData2(1, payload, sizeof(payload)-1, 0);
+  Serial.println(sizeof(payload)-1);
   msgOLED(F("Packet queued"));
   // Next TX is scheduled after TX_COMPLETE event.
+  }
 #ifdef DEBUG
 msgOLED(F("Leave do_send"));
 #endif
@@ -413,7 +306,7 @@ msgOLED(F("Leave do_send"));
 
 void blinkTemp(int n, int d = 500, int t = 800)
 {
-  const int tempBlinkPin = PB7;
+  const int tempBlinkPin = PC13;
 
   pinMode(tempBlinkPin, OUTPUT);
   for (int i = 0; i < n; i++) {
@@ -471,11 +364,8 @@ void readData()
     Serial.println(" meters");
     
     Serial.println();
-  int v = analogRead(tempPin);
-  pinMode(powerNTCPin, INPUT);
-  //adc_disable(ADC1);
 
-  double steinhart = v;
+  double steinhart = bmp.readTemperature();
   steinhart = 4095 / steinhart - 1;
   steinhart = 10000 * steinhart;
   steinhart = steinhart / 10000;     // (R/Ro)
@@ -496,20 +386,25 @@ void readData()
   blinkTemp(int(Temp) / 10);
   blinkTemp(int(Temp) % 10);
 
-#ifdef DEBUG
-msgOLED(v);
-#endif
+
 
   //mydata.power = (vref / 10) - 200;
   mydata.alt=bmp.readAltitude();
-  mydata.pres = bmp.readPressure();
+  mydata.pres = bmp.readPressure()/100;
   String dataString="T:";
   dataString+=bmp.readTemperature();
   dataString+="C P:";
   dataString+=bmp.readPressure();
-    dataString+="Bar Alt:";
+  dataString+="Bar Alt:";
   dataString+=bmp.readAltitude();
-  msgOLED(dataString);
+  msgOLED(dataString);  
+  payload[0]=highByte(mydata.temp);
+  payload[1]=lowByte(mydata.temp);
+  payload[2]=highByte(mydata.pres);
+  payload[3]=lowByte(mydata.pres);
+  payload[4]=highByte(mydata.alt);  
+  payload[5]=lowByte(mydata.alt); 
+
 }
 
 void allInput()
@@ -554,6 +449,7 @@ void allInput()
 }
 
 void setup() {
+
  if (!bmp.begin()) 
   Serial.println("Could not find a valid BMP085 sensor, check wiring!");
 //  allInput();
@@ -588,7 +484,7 @@ void setup() {
 
 Serial.begin(115200);
 
-#if 0
+#if 1
   // Show ID in human friendly format (digits 1..8)
   u1_t* p = STM32_ID;
   blinkN((p[0] & 0x7) + 1);
@@ -630,16 +526,12 @@ Serial.begin(115200);
   LMIC_setupChannel(5, 433175000, DR_RANGE_MAP(DR_SF7, DR_SF7),  BAND_CENTI);      // g-band
   LMIC_setupChannel(6, 433175000, DR_RANGE_MAP(DR_SF7, DR_SF7),  BAND_CENTI);      // g-band
   LMIC_setupChannel(7, 433175000, DR_RANGE_MAP(DR_SF7, DR_SF7),  BAND_CENTI);      // g-band
-  LMIC_setupChannel(8, 433175000, DR_RANGE_MAP(DR_FSK,  DR_FSK),  BAND_MILLI);      // g2-band
+  LMIC_setupChannel(8, 433175000, DR_RANGE_MAP(DR_SF7,  DR_SF7),  BAND_MILLI);      // g2-band
   // TTN defines an additional channel at 869.525Mhz using SF9 for class B
   // devices' ping slots. LMIC does not have an easy way to define set this
   // frequency and support for class B is spotty and untested, so this
   // frequency is not configured here.
 
-#if F_CPU == 8000000UL
-  // HSI is less accurate
-  LMIC_setClockError(MAX_CLOCK_ERROR * 1 / 100);
-#endif
 
 #ifndef OTA
   // TTN uses SF9 for its RX2 window.
@@ -649,14 +541,6 @@ Serial.begin(115200);
   LMIC_setDrTxpow(RATE, 14);
 #endif
 
-#ifdef SLEEP
-  if (DEEP_SLEEP)
-    LMIC.seqnoUp = readBR(0);
-
-#if defined(OTA) && DEEP_SLEEP
-#error "DEEP_SLEEP and OTA cannot be combined!"
-#endif
-#endif
 
   // Start job
   msgOLED("Starting job..");
@@ -672,20 +556,20 @@ Serial.begin(115200);
 //  display.display();
 //  delay(2000);
 
-  // Clear the buffer.
-//  display.clearDisplay();
-  display.setTextSize(1);
-  display.setTextColor(WHITE);
-//  display.setCursor(0,0);
-  
+
 msgOLED(F("Leave setup"));
 #endif
 }
 
 
 void loop() {
-//msgOLED("Entering Loop");
-//#ifndef SLEEP
+  enum { LED_ON=0, LED_OFF=1 };    int millivolts;
+    uint32_t t0 = millis();
+ // for Blue Pill .. active low led
+    digitalWrite(led,LED_ON);
+    delay(50);
+    digitalWrite(led,LED_OFF);
+
 
 #ifdef BLINK
   static int count;
@@ -695,29 +579,10 @@ void loop() {
 #endif
  os_runloop_once();
 
-
-//  msgOLED("Starting job..");
-//  do_send(&sendjob);
-#ifdef OTA
-
-
-  if (!joined) {
-//    msgOLED("Entering OLED");
-    os_runloop_once();
-//    return;
-  }
-#endif
-
-/*  if (next == false) {
-    digitalWrite(led, LOW);
-    if (DEEP_SLEEP)
-    LMIC.skipRX = 1; // Do NOT wait for downstream data!
-//    os_runloop_once();
-
-  } else {
-*/
 #ifdef BLINK
     digitalWrite(led, HIGH);
+    delay(5);
+    digitalWrite(led, LOW);
 #endif
 
 
@@ -726,12 +591,15 @@ void loop() {
 
     if(millis()-prevMillis>MESSAGE_DELAY)
     {
+//      LMIC_shutdown();
+//      os_init();
+//      LMIC_reset();
       prevMillis=millis();
       msgOLED("Sending TTN data");
+      readData();
       do_send(&sendjob);
     }
-    
-
+    displayTPA();
 }
 void msgOLED(String s)
 {
@@ -769,5 +637,28 @@ void msgOLED(int i)
   }
   display.println(s);
   display.display();
+}
+void displayTPA(){
+  display.setCursor(0,0);
+  display.clearDisplay();
+  display.setTextSize(2);
+  display.setCursor(0,0);
+  mydata.pres = bmp.readPressure();
+  String dataString="T:";
+  dataString+=bmp.readTemperature();
+  dataString+="C \nP:";
+  dataString+=bmp.readPressure()/100;
+  dataString+="Bar \nAlt:";
+  dataString+=bmp.readAltitude();
+  display.println(dataString);
+  display.print("Next:");
+  long timeleft=(MESSAGE_DELAY-(millis()-prevMillis))/1000;
+  display.print(timeleft);
+  display.print(" sec");  
+  display.display();
+  delay(1000);
+  display.setTextSize(1);
+  display.display();
+
 }
 

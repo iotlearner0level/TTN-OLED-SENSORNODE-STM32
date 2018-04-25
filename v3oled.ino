@@ -71,7 +71,7 @@ static unsigned char NWKSKEY[16] = { };
 static unsigned char APPSKEY[16] = { };
 
 // LoRaWAN end-device address (DevAddr), ie 0x91B375AC  (from staging.thethingsnetwork.org)
-static const u4_t DEVADDR = ; // <-- Change this address for every node!
+static const u4_t DEVADDR = 0x ; // <-- Change this address for every node!
 #else
 
 static const u1_t APPEUI[8] = { }; // reversed 8 bytes of AppEUI registered with ttnctl
@@ -101,10 +101,10 @@ struct {
   byte alt;
   byte volt;
 } mydata;
-byte payload[8];
+byte payload[10];
 
-
-void blinkN(int n, int d = 400, int t = 800)
+#ifdef BLINK
+void blinkN(int n, int d = 250, int t = 800)
 {
   pinMode(LED_BUILTIN, OUTPUT);
   for (int i = 0; i < n; i++) {
@@ -113,14 +113,13 @@ void blinkN(int n, int d = 400, int t = 800)
 delay(5);
     digitalWrite(LED_BUILTIN, 1);
 //    mdelay(d);
-    delay(5);
+    delay(d);
   }
   pinMode(LED_BUILTIN, INPUT);
  // mdelay(t);
-  delay(5);
+  delay(t);
 }
-
-
+#endif
 #ifndef OTA
 // These callbacks are only used in over-the-air activation, so they are
 // left empty here (we cannot leave them out completely unless
@@ -151,7 +150,7 @@ void os_getDevKey (u1_t* buf) {
 
 static const u1_t DEVEUI[8]={ 0x43, 0x35, 0x42, 0x32, 0x24, 0x45, 0x23, 0x25 }; // reversed 8 bytes of DevEUI registered with ttnctl
 void os_getDevEui (u1_t* buf) {
-  // use chip ID:
+// use chip ID:
 //  memcpy(buf, &STM32_ID[1], 8);
 memcpy(buf,DEVEUI,8);
   // Make locally registered:
@@ -289,10 +288,12 @@ int temperature = (payload[0]<<8)|payload[1];
 int pressure = (payload[2]<<8)|payload[3];
 int altitude = (payload[4]<<8)|payload[5];
 int volt= (payload[6]<<8)|payload[7];
+int chipTemp=(payload[8]<<8)|payload[9];
+
   Serial.println("Setting payload data");
-  String s="Temperature=";s+=temperature;s+=" Pressure=";s+=pressure;s+="Altitude=";s+=altitude;
+  String s="Temperature=";s+=temperature;s+=" Pressure=";s+=pressure;s+="Altitude=";s+=altitude;s+=" Voltage:";s+=volt;s+=" Chip Temperature:";s+=chipTemp;
   Serial.println(s);
-  LMIC_setTxData2(1, payload, sizeof(payload)-1, 0);
+  LMIC_setTxData2(1, payload, sizeof(payload), 0);
   Serial.println(sizeof(payload)-1);
   msgOLED(F("Packet queued"));
   // Next TX is scheduled after TX_COMPLETE event.
@@ -306,7 +307,7 @@ msgOLED(F("Leave do_send"));
 
 void blinkTemp(int n, int d = 500, int t = 800)
 {
-  const int tempBlinkPin = PC13;
+  const int tempBlinkPin = LED_BUILTIN;
 
   pinMode(tempBlinkPin, OUTPUT);
   for (int i = 0; i < n; i++) {
@@ -328,15 +329,14 @@ void blinkTemp(int n, int d = 500, int t = 800)
 
 void readData()
 {
-//  adc_enable(ADC1);
-
-//  adc_reg_map *regs = ADC1->regs;
-//  regs->CR2 |= ADC_CR2_TSVREFE; // enable VREFINT and temp sensor
-//  regs->SMPR1 = (ADC_SMPR1_SMP17 /* | ADC_SMPR1_SMP16 */); // sample rate for VREFINT ADC channel
-    int vref=3.3;
-//  int vref = 1200 * 4096 / adc_read(ADC1, 17); // ADC sample to millivolts
-//  regs->CR2 &= ~ADC_CR2_TSVREFE; // disable VREFINT and temp sensor
-
+  msgOLED(F("Inside readData()"));
+ float Vdd = readVdd(),tempChip=readTempSensor(Vdd);
+  Serial.print("Vdd=  ");
+  Serial.print(Vdd);
+  Serial.print(" V Temp= ");
+  Serial.print(readTempSensor(Vdd));
+  Serial.println(" °C");
+ 
     Serial.print("Temperature = ");
     Serial.print(bmp.readTemperature());
     Serial.println(" *C");
@@ -375,14 +375,14 @@ void readData()
   steinhart = 1.0 / steinhart;                 // Invert
   steinhart -= 273.15;                         // convert to C
   double Temp = steinhart;
+/*
+  Vdd += 5;
+  if (Vdd < 2000 || Vdd >= 3000)*/
+  blinkN(Vdd / 1000);
+  blinkN((int)(Vdd*1000) % 1000 / 100);
+  blinkN((int)(Vdd*1000) % 100 / 10);
 
-  vref += 5;
-  if (vref < 2000 || vref >= 3000)
-    blinkN(vref / 1000);
-  blinkN(vref % 1000 / 100);
-  blinkN(vref % 100 / 10);
-
-  mydata.temp = bmp.readTemperature();
+  mydata.temp = bmp.readTemperature()*100;
   blinkTemp(int(Temp) / 10);
   blinkTemp(int(Temp) % 10);
 
@@ -397,6 +397,10 @@ void readData()
   dataString+=bmp.readPressure();
   dataString+="Bar Alt:";
   dataString+=bmp.readAltitude();
+  dataString+=" Vdd:";
+  dataString+=Vdd;
+  dataString+="V Tc:";
+  dataString+=tempChip;
   msgOLED(dataString);  
   payload[0]=highByte(mydata.temp);
   payload[1]=lowByte(mydata.temp);
@@ -404,9 +408,14 @@ void readData()
   payload[3]=lowByte(mydata.pres);
   payload[4]=highByte(mydata.alt);  
   payload[5]=lowByte(mydata.alt); 
+  payload[6]=highByte((int)(Vdd*1000.0));  
+  payload[7]=lowByte((int)(Vdd*1000.0)); 
+  int chipTemperature=tempChip*100;
+  payload[8]=highByte(chipTemperature);  
+  payload[9]=lowByte(chipTemperature); 
 
 }
-
+/*
 void allInput()
 {
   //adc_disable(ADC1);
@@ -447,8 +456,9 @@ void allInput()
   pinMode(PB14, INPUT);
   pinMode(PB15, INPUT);
 }
-
+*/
 void setup() {
+  analogRead(A0); // Workaround to init g_current_pin used in HAL_ADC_MspInit
 
  if (!bmp.begin()) 
   Serial.println("Could not find a valid BMP085 sensor, check wiring!");
@@ -484,7 +494,7 @@ void setup() {
 
 Serial.begin(115200);
 
-#if 1
+#if 0
   // Show ID in human friendly format (digits 1..8)
   u1_t* p = STM32_ID;
   blinkN((p[0] & 0x7) + 1);
@@ -662,3 +672,76 @@ void displayTPA(){
 
 }
 
+uint16_t adc_read(uint32_t channel)
+{
+  ADC_HandleTypeDef AdcHandle = {};
+  ADC_ChannelConfTypeDef  AdcChannelConf = {};
+  __IO uint16_t uhADCxConvertedValue = 0;
+
+  AdcHandle.Instance = ADC1;
+  AdcHandle.State = HAL_ADC_STATE_RESET;
+  AdcHandle.Init.DataAlign             = ADC_DATAALIGN_RIGHT;           /* Right-alignment for converted data */
+  AdcHandle.Init.ScanConvMode          = DISABLE;                       /* Sequencer disabled (ADC conversion on only 1 channel: channel set on rank 1) */
+  AdcHandle.Init.ContinuousConvMode    = DISABLE;                       /* Continuous mode disabled to have only 1 conversion at each conversion trig */
+  AdcHandle.Init.DiscontinuousConvMode = DISABLE;                       /* Parameter discarded because sequencer is disabled */
+  AdcHandle.Init.ExternalTrigConv      = ADC_SOFTWARE_START;            /* Software start to trig the 1st conversion manually, without external event */
+  AdcHandle.Init.NbrOfConversion       = 1;                             /* Specifies the number of ranks that will be converted within the regular group sequencer. */
+  AdcHandle.Init.NbrOfDiscConversion   = 0;                             /* Parameter discarded because sequencer is disabled */
+
+  if (HAL_ADC_Init(&AdcHandle) != HAL_OK) {
+    return 0;
+  }
+
+  AdcChannelConf.Channel      = channel;             /* Specifies the channel to configure into ADC */
+  AdcChannelConf.Rank         = ADC_REGULAR_RANK_1;               /* Specifies the rank in the regular group sequencer */
+  AdcChannelConf.SamplingTime = ADC_SAMPLETIME_13CYCLES_5;                     /* Sampling time value to be set for the selected channel */
+
+  /*##-2- Configure ADC regular channel ######################################*/
+  if (HAL_ADC_ConfigChannel(&AdcHandle, &AdcChannelConf) != HAL_OK)
+  {
+    /* Channel Configuration Error */
+    return 0;
+  }
+  /*##-2.1- Calibrate ADC then Start the conversion process ####################*/
+  if (HAL_ADCEx_Calibration_Start(&AdcHandle) !=  HAL_OK) {
+    /* ADC Calibration Error */
+    return 0;
+  }
+  /*##-3- Start the conversion process ####################*/
+  if (HAL_ADC_Start(&AdcHandle) != HAL_OK) {
+    /* Start Conversation Error */
+    return 0;
+  }
+  /*##-4- Wait for the end of conversion #####################################*/
+  /*  For simplicity reasons, this example is just waiting till the end of the
+      conversion, but application may perform other tasks while conversion
+      operation is ongoing. */
+  if (HAL_ADC_PollForConversion(&AdcHandle, 10) != HAL_OK) {
+    /* End Of Conversion flag not set on time */
+    return 0;
+  }
+  /* Check if the continous conversion of regular channel is finished */
+  if ((HAL_ADC_GetState(&AdcHandle) & HAL_ADC_STATE_REG_EOC) == HAL_ADC_STATE_REG_EOC) {
+    /*##-5- Get the converted value of regular channel  ########################*/
+    uhADCxConvertedValue = HAL_ADC_GetValue(&AdcHandle);
+  }
+
+  if (HAL_ADC_Stop(&AdcHandle) != HAL_OK) {
+    /* Stop Conversation Error */
+    return 0;
+  }
+  if(HAL_ADC_DeInit(&AdcHandle) != HAL_OK) {
+    return 0;
+  }
+  return uhADCxConvertedValue;
+}
+static float readVdd()
+{
+  return (1.20 * 4096.0 / adc_read(ADC_CHANNEL_VREFINT)); // ADC sample to V
+  //return (1200 * 4096 / adc_read(ADC_CHANNEL_VREFINT)); // ADC sample to mV
+}
+
+static float readTempSensor(float Vdd)
+{
+  return ((1.43 - (Vdd / 4096.0 * adc_read(ADC_CHANNEL_TEMPSENSOR))) / 0.0043 + 25.0);
+}

@@ -38,3 +38,5 @@ var chipTemp= ((bytes[8]<<8)|bytes[9])/100;
     "chipTemp":chipTemp
   };
 }
+
+To say bytes on float, i multiply temperature by 100 and send two bytes only. in the payload formats function divide by 100 to get the original data.
